@@ -2,8 +2,9 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { Job } from '../types';
 import { blobToBase64 } from '../utils/helpers';
 
-// FIX: Per @google/genai guidelines, API key must be from process.env.API_KEY
-// and is assumed to be available. This also resolves the 'import.meta.env' TypeScript error.
+// Per Vercel + Vite guidelines, client-side env vars MUST be prefixed with VITE_
+// and accessed via import.meta.env.
+// FIX: Per @google/genai coding guidelines, the API key must be accessed via process.env.API_KEY.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
 
 const resumeAnalysisSchema = {
