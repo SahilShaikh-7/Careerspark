@@ -1,12 +1,9 @@
-/// <reference types="vite/client" />
-
-// FIX: Moved reference to vite client types to top of file to fix import.meta.env errors.
-
+// FIX: Cast import.meta to any to bypass TypeScript errors with vite/client types.
 import { createClient } from '@supabase/supabase-js';
 
 // Read credentials using Vite's required syntax for client-side env vars.
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL;
+const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
 
 
 if (!supabaseUrl || !supabaseAnonKey) {

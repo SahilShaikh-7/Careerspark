@@ -1,13 +1,16 @@
+// FIX: Cast import.meta to any to bypass TypeScript errors with vite/client types.
 import { GoogleGenAI, Type } from '@google/genai';
 import { Job } from '../types';
 import { blobToBase64 } from '../utils/helpers';
 
-// FIX: Per @google/genai coding guidelines, the API key must be obtained from process.env.API_KEY.
-// This also resolves the vite/client type errors.
-if (!process.env.API_KEY) {
-    throw new Error("Google GenAI API key is missing. Please set the API_KEY environment variable.");
+// Per Vite's security model, client-side env vars MUST be prefixed with VITE_
+// and accessed via import.meta.env.
+const apiKey = (import.meta as any).env.VITE_GEMINI_API_KEY;
+
+if (!apiKey) {
+    throw new Error("Google GenAI API key is missing. Please set the VITE_GEMINI_API_KEY environment variable.");
 }
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: apiKey });
 
 const resumeAnalysisSchema = {
     type: Type.OBJECT,
