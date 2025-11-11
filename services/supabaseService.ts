@@ -1,154 +1,166 @@
+
 import { supabase } from '../lib/supabase';
-import { Resume, Job, Skill, Profile } from '../types';
+import { Profile, Resume } from '../types';
 
-// --- Profile Functions ---
-export const getUserProfile = async (userId: string): Promise<Profile | null> => {
-    const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
-    if (error) {
-        console.error("Error fetching profile:", error);
-        return null;
-    }
+/**
+ * Fetches the public profile for a given user.
+ * @param userId The ID of the user.
+ * @returns The user's profile or null if not found or on error.
+ */
+export const getProfile = async (userId: string): Promise<Profile | null> => {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, full_name, updated_at')
+      .eq('id', userId)
+      .single();
+
+    if (error) throw error;
     return data;
-}
-
-export const updateUserProfile = async (userId: string, profileData: Omit<Profile, 'id' | 'email'>): Promise<Profile | null> => {
-    const { data, error } = await supabase.from('profiles').update({ full_name: profileData.full_name }).eq('id', userId).select().single();
-     if (error) {
-        console.error("Error updating profile:", error);
-        return null;
-    }
-    return data;
-}
-
-
-// --- Resume Functions ---
-export const fetchUserResumes = async (userId: string): Promise<Resume[]> => {
-    const { data, error } = await supabase
-        .from('resumes')
-        .select(`*`)
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
-
-    if (error) {
-        console.error('Error fetching user resumes:', error);
-        return [];
-    }
-    return data as Resume[];
+  } catch (error) {
+    console.error('Error fetching profile:', error);
+    return null;
+  }
 };
 
+/**
+ * Updates a user's profile.
+ * @param userId The ID of the user whose profile to update.
+ * @param updates The profile fields to update.
+ */
+export const updateProfile = async (userId: string, updates: { full_name: string }): Promise<void> => {
+  try {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq('id', userId);
 
-export const getResumeData = async (id: string): Promise<Resume | null> => {
-    // RLS ensures the user can only fetch their own resume.
-    const { data, error } = await supabase
-        .from('resumes')
-        .select(`
-            *,
-            skills (*),
-            feedback (*),
-            matched_jobs (*)
-        `)
-        .eq('id', id)
-        .single();
-
-    if (error) {
-        console.error('Error fetching resume data:', error);
-        throw new Error(error.message);
-    }
-    return data as Resume;
+    if (error) throw error;
+  } catch (error) {
+    console.error('Error updating profile:', error);
+    throw error;
+  }
 };
 
-export const createResumeRecord = async (
-    resume: Partial<Pick<Resume, 'filename' | 'file_url'>>,
-    userId: string
-): Promise<{ data: Resume | null; error: any }> => {
-    const { data, error } = await supabase
-        .from('resumes')
-        .insert({
-            filename: resume.filename,
-            file_url: resume.file_url,
-            status: 'processing',
-            user_id: userId,
-        })
-        .select()
-        .single();
-
-    return { data: data as Resume, error };
-};
-
-type AnalysisData = {
-    score: number;
-    feedback: string[];
-    skills: Omit<Skill, 'id' | 'resume_id'>[];
-    experience_level: 'entry-level' | 'junior' | 'mid-level' | 'senior';
-    total_experience: number;
-    matched_jobs: Omit<Job, 'id' | 'resume_id'>[];
-    extracted_text: string;
-};
-
-export const updateResumeWithAnalysis = async (
-    resumeId: string,
-    analysis: AnalysisData
-): Promise<{ data: Resume | null; error: any }> => {
+/**
+ * Uploads a resume file to Supabase Storage.
+ * @param file The resume file to upload.
+ * @param userId The ID of the user uploading the file.
+ * @returns The public URL of the uploaded file or null on error.
+ */
+export const uploadResumeFile = async (file: File, userId:string): Promise<string | null> => {
+    const filePath = `${userId}/${Date.now()}_${file.name.replace(/\s/g, '_')}`;
     try {
-        const { score, experience_level, total_experience, extracted_text, skills, feedback, matched_jobs } = analysis;
-
-        // Sanitize and provide defaults
-        const sanitizedScore = typeof score === 'number' ? score : 0;
-        const sanitizedExpLevel = experience_level || 'entry-level';
-        const sanitizedTotalExp = typeof total_experience === 'number' ? total_experience : 0;
-        
-        const { error: resumeUpdateError } = await supabase
+        const { error: uploadError } = await supabase.storage
             .from('resumes')
-            .update({
-                score: sanitizedScore,
-                experience_level: sanitizedExpLevel,
-                total_experience: sanitizedTotalExp,
-                extracted_text,
-                status: 'completed',
-            })
-            .eq('id', resumeId);
+            .upload(filePath, file);
 
-        if (resumeUpdateError) throw resumeUpdateError;
+        if (uploadError) {
+            throw uploadError;
+        }
 
-        const skillsToInsert = (skills || []).map(s => ({ ...s, resume_id: resumeId, confidence: typeof s.confidence === 'number' ? s.confidence : 0.8 }));
-        const feedbackToInsert = (feedback || []).map(f => ({ suggestion: f, resume_id: resumeId }));
-        const jobsToInsert = (matched_jobs || []).map(j => ({ ...j, resume_id: resumeId, match_percentage: typeof j.match_percentage === 'number' ? j.match_percentage : 0 }));
+        const { data } = supabase.storage.from('resumes').getPublicUrl(filePath);
+        return data.publicUrl;
+    } catch (error) {
+        console.error('Error uploading resume file:', error);
+        return null;
+    }
+};
 
-        const results = await Promise.all([
-            skillsToInsert.length ? supabase.from('skills').insert(skillsToInsert) : Promise.resolve({ error: null }),
-            feedbackToInsert.length ? supabase.from('feedback').insert(feedbackToInsert) : Promise.resolve({ error: null }),
-            jobsToInsert.length ? supabase.from('matched_jobs').insert(jobsToInsert) : Promise.resolve({ error: null }),
-        ]);
-        
-        for (const result of results) {
-            if (result.error) throw result.error;
+/**
+ * Saves the analyzed resume data and its relations to the database.
+ * @param payload The complete data payload for the resume.
+ * @returns An object with the saved resume data or an error.
+ */
+export const saveResumeData = async (payload: Omit<Resume, 'id' | 'created_at'>): Promise<{ data: Resume | null, error: any }> => {
+    const { skills, feedback, matched_jobs, ...resumeInfo } = payload;
+
+    try {
+        const { data: newResume, error: resumeError } = await supabase
+            .from('resumes')
+            .insert([resumeInfo])
+            .select()
+            .single();
+
+        if (resumeError) throw resumeError;
+
+        const resumeId = newResume.id;
+
+        if (skills && skills.length > 0) {
+            const skillsToInsert = skills.map(skill => ({ ...skill, resume_id: resumeId }));
+            const { error: skillsError } = await supabase.from('skills').insert(skillsToInsert);
+            if (skillsError) console.error('Error saving skills:', skillsError);
+        }
+
+        if (feedback && feedback.length > 0) {
+            const feedbackToInsert = feedback.map(fb => ({ ...fb, resume_id: resumeId }));
+            const { error: feedbackError } = await supabase.from('feedback').insert(feedbackToInsert);
+            if (feedbackError) console.error('Error saving feedback:', feedbackError);
+        }
+
+        if (matched_jobs && matched_jobs.length > 0) {
+            const jobsToInsert = matched_jobs.map(job => ({ ...job, resume_id: resumeId }));
+            const { error: jobsError } = await supabase.from('matched_jobs').insert(jobsToInsert);
+            if (jobsError) console.error('Error saving matched jobs:', jobsError);
         }
         
-        const finalData = await getResumeData(resumeId);
-
-        return { data: finalData, error: null };
+        const finalResume = await getResumeData(resumeId);
+        return { data: finalResume, error: null };
 
     } catch (error) {
-        console.error('Error updating resume with analysis:', error);
+        console.error('Error saving complete resume data:', error);
         return { data: null, error };
     }
 };
 
-export const uploadResumeFile = async (file: File, userId: string): Promise<{ file_url: string | null; error: any }> => {
-    const filePath = `${userId}/${crypto.randomUUID()}/${file.name}`;
-    
-    const { error } = await supabase.storage
-        .from('resumes')
-        .upload(filePath, file);
 
-    if (error) {
-        console.error("Error uploading file to Supabase storage:", error);
-        return { file_url: null, error };
+/**
+ * Fetches all resume analyses for a specific user.
+ * @param userId The ID of the user.
+ * @returns An array of resumes.
+ */
+export const getResumesForUser = async (userId: string): Promise<Resume[]> => {
+    try {
+        // This query is optimized for the dashboard list view.
+        const { data, error } = await supabase
+            .from('resumes')
+            .select('id, filename, score, created_at')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false });
+        
+        if (error) throw error;
+
+        // The type assertion is safe here as we are only using a subset of Resume fields.
+        return (data || []) as Resume[];
+    } catch(error) {
+        console.error('Error fetching resumes for user:', error);
+        return [];
     }
+};
 
-    const { data } = supabase.storage
-        .from('resumes')
-        .getPublicUrl(filePath);
+/**
+ * Fetches a single resume analysis and all its related data by ID.
+ * @param resumeId The ID of the resume.
+ * @returns The complete resume data or null if not found or on error.
+ */
+export const getResumeData = async (resumeId: string): Promise<Resume | null> => {
+    try {
+        const { data, error } = await supabase
+            .from('resumes')
+            .select(`
+                *,
+                skills(*),
+                feedback(*),
+                matched_jobs(*)
+            `)
+            .eq('id', resumeId)
+            .single();
 
-    return { file_url: data.publicUrl, error: null };
+        if (error) throw error;
+
+        return data;
+    } catch (error) {
+        console.error('Error fetching resume data with relations:', error);
+        return null;
+    }
 };

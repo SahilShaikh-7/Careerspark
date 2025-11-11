@@ -1,15 +1,27 @@
+import { User as SupabaseUser } from '@supabase/supabase-js';
+
+export type User = SupabaseUser;
+
+export interface Profile {
+  id: string;
+  full_name: string;
+  updated_at?: string;
+}
+
 export interface Skill {
   id?: string;
-  resume_id?: string;
   name: string;
   category: 'technical' | 'soft' | 'domain';
   confidence: number;
-  experience_years?: number;
+}
+
+export interface Feedback {
+  id?: string;
+  suggestion: string;
 }
 
 export interface Job {
   id?: string;
-  resume_id?: string;
   title: string;
   company: string;
   location: string;
@@ -21,32 +33,16 @@ export interface Job {
   job_type: string;
 }
 
-export interface Feedback {
-    id?: string;
-    resume_id?: string;
-    suggestion: string;
-}
-
-export type AnalysisStatus = 'processing' | 'completed' | 'failed';
-
 export interface Resume {
   id: string;
-  user_id: string; // Made required again
+  user_id: string;
   filename: string;
   file_url: string;
-  extracted_text: string | null;
-  skills: Skill[];
-  score: number;
-  feedback: Feedback[];
-  matched_jobs: Job[];
-  experience_level: 'entry-level' | 'junior' | 'mid-level' | 'senior';
-  total_experience: number;
-  status: AnalysisStatus;
   created_at: string;
-}
-
-export interface Profile {
-  id?: string;
-  full_name: string;
-  email: string;
+  score: number;
+  experience_level: string;
+  total_experience: number;
+  feedback: { suggestion: string }[];
+  skills: Skill[];
+  matched_jobs: Job[];
 }

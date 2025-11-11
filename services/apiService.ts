@@ -1,137 +1,128 @@
 import { GoogleGenAI, Type } from '@google/genai';
-import { JSEARCH_API_KEY, JSEARCH_API_HOST, JSEARCH_API_URL } from '../constants';
 import { Job } from '../types';
 import { blobToBase64 } from '../utils/helpers';
 
-// Fix: Initialize GoogleGenAI with API key from environment variables.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// FIX: Per @google/genai guidelines, API key must be from process.env.API_KEY
+// and is assumed to be available. This also resolves the 'import.meta.env' TypeScript error.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
 
-const analysisSchema = {
-  type: Type.OBJECT,
-  properties: {
-    score: {
-      type: Type.NUMBER,
-      description: 'A holistic score for the resume from 0 to 100, considering skills, experience, and clarity.',
-    },
-    feedback: {
-      type: Type.ARRAY,
-      description: 'An array of 3-5 concise, actionable suggestions for improving the resume.',
-      items: { type: Type.STRING },
-    },
-    skills: {
-      type: Type.ARRAY,
-      description: 'A list of skills extracted from the resume.',
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          name: { type: Type.STRING, description: 'The name of the skill.' },
-          category: {
-            type: Type.STRING,
-            description: 'The category of the skill.',
-            enum: ['technical', 'soft', 'domain'],
-          },
-          confidence: {
-            type: Type.NUMBER,
-            description: 'A confidence score from 0.0 to 1.0 on how well the skill is demonstrated.',
-          },
-          experience_years: {
-            type: Type.NUMBER,
-            description: 'Estimated years of experience with this skill, if mentioned.',
-          },
-        },
-        required: ['name', 'category', 'confidence'],
+const resumeAnalysisSchema = {
+    type: Type.OBJECT,
+    properties: {
+      score: {
+        type: Type.NUMBER,
+        description: 'An overall score for the resume from 0-100 based on clarity, skills, and experience.',
       },
+      feedback: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+        description: 'A list of 3-5 actionable suggestions to improve the resume.',
+      },
+      skills: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING },
+            category: { type: Type.STRING, enum: ['technical', 'soft', 'domain'] },
+            confidence: { type: Type.NUMBER, description: 'Confidence score from 0.0 to 1.0 on whether the candidate possesses this skill.' },
+          },
+          required: ['name', 'category', 'confidence'],
+        },
+        description: 'A list of skills extracted from the resume.',
+      },
+      experience_level: {
+        type: Type.STRING,
+        enum: ['entry-level', 'junior', 'mid-level', 'senior'],
+        description: 'The estimated experience level of the candidate.',
+      },
+      total_experience: {
+        type: Type.NUMBER,
+        description: 'Total years of professional experience.',
+      },
+      job_titles: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
+          description: 'A list of 3-5 suitable job titles for the candidate based on the resume.'
+      }
     },
-    experience_level: {
-      type: Type.STRING,
-      description: 'The estimated career experience level of the candidate.',
-      enum: ['entry-level', 'junior', 'mid-level', 'senior'],
-    },
-    total_experience: {
-      type: Type.NUMBER,
-      description: 'The total years of professional experience calculated from the work history.',
-    },
-    job_titles: {
-      type: Type.ARRAY,
-      description: 'A list of 3-4 relevant job titles that would be a good fit for this resume, to be used for a job search.',
-      items: { type: Type.STRING },
-    },
-  },
-  required: ['score', 'feedback', 'skills', 'experience_level', 'total_experience', 'job_titles'],
+    required: ['score', 'feedback', 'skills', 'experience_level', 'total_experience', 'job_titles'],
 };
 
-export const analyzeResume = async (file: File) => {
-  try {
-    const base64Data = await blobToBase64(file);
-    const resumePart = {
-      inlineData: {
-        mimeType: file.type,
-        data: base64Data,
-      },
-    };
+export const analyzeResume = async (file: File): Promise<{ data: any | null, error: string | null }> => {
+    try {
+        const base64Data = await blobToBase64(file);
+        const filePart = {
+            inlineData: {
+                data: base64Data,
+                mimeType: file.type,
+            },
+        };
 
-    const prompt = `Analyze the provided resume document. Extract the candidate's skills, experience, and other relevant details. Provide a comprehensive analysis based on the provided JSON schema. The feedback should be constructive and specific. The score should be a realistic assessment of the resume's quality. Infer experience years for skills where possible.`;
+        const textPart = {
+            text: `Analyze this resume for a candidate seeking a job in India. Extract key information and provide feedback. Respond in JSON format according to the provided schema.`,
+        };
 
-    // Fix: Use the correct API call `ai.models.generateContent` for complex text tasks with file input.
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-pro',
-      contents: [{ parts: [resumePart, { text: prompt }] }],
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: analysisSchema,
-      },
-    });
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: { parts: [filePart, textPart] },
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: resumeAnalysisSchema,
+            },
+        });
+        
+        const jsonText = response.text.trim();
+        const analysisData = JSON.parse(jsonText);
 
-    // Fix: Access the response text directly to get the JSON string.
-    const analysisResult = JSON.parse(response.text);
-    return { data: analysisResult, error: null };
-  } catch (error) {
-    console.error('Error analyzing resume with Gemini API:', error);
-    return { data: null, error: error as Error };
-  }
+        return { data: analysisData, error: null };
+
+    } catch (error: any) {
+        console.error("Error analyzing resume:", error);
+        return { data: null, error: error.message || "Failed to analyze resume." };
+    }
 };
 
 export const findMatchingJobs = async (jobTitles: string[]): Promise<Job[]> => {
     if (!jobTitles || jobTitles.length === 0) return [];
-    
-    const query = jobTitles.join(' OR ');
-    
     try {
-        const response = await fetch(
-            `${JSEARCH_API_URL}?query=${encodeURIComponent(query)}&page=1&num_pages=1&country=IN&employment_types=FULLTIME`,
-            {
-                method: 'GET',
-                headers: {
-                    'X-RapidAPI-Key': JSEARCH_API_KEY,
-                    'X-RapidAPI-Host': JSEARCH_API_HOST,
-                },
-            }
-        );
+        const prompt = `Find 5-10 recent job openings in India for the following roles: "${jobTitles.join('", "')}". Use Google Search to find relevant results from job boards like LinkedIn, Naukri, or official company career pages. For each job, provide a detailed entry. The final output should be a plain text response containing a markdown code block with a JSON array of job objects. Each object should include: "title" (string), "company" (string), "location" (string), "match_percentage" (number, your best estimate 0-100), "apply_url" (string, a direct link), "description" (string, 1-2 sentences), "salary_range" (string), "experience_required" (string, e.g., '2+ years'), and "job_type" (string, e.g., 'Full-time'). Do not include any text outside of the JSON markdown block.`;
+        
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: {
+                tools: [{ googleSearch: {} }],
+            },
+        });
 
-        if (!response.ok) {
-            throw new Error(`JSearch API request failed with status ${response.status}`);
+        let jsonText = response.text.trim();
+        const jsonMatch = jsonText.match(/```json\n([\s\S]*?)\n```/);
+        if (jsonMatch && jsonMatch[1]) {
+            jsonText = jsonMatch[1];
         }
 
-        const result = await response.json();
-        if (!result.data) return [];
+        try {
+            const jobs = JSON.parse(jsonText);
+            return (jobs || []) as Job[];
+        } catch(e) {
+            console.error("Failed to parse JSON from model response for jobs", e);
+            const fixJsonPrompt = `The following text is supposed to be a JSON array of objects but is invalid. Please fix it and return only the valid JSON array. Do not add any commentary.\n\n${jsonText}`;
+            const fixResponse = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: fixJsonPrompt,
+            });
+            // FIX: Correctly extract JSON from the markdown code block before parsing to prevent errors.
+            let fixedJsonText = fixResponse.text.trim();
+            const fixedJsonMatch = fixedJsonText.match(/```json\n([\s\S]*?)\n```/);
+            if (fixedJsonMatch && fixedJsonMatch[1]) {
+                fixedJsonText = fixedJsonMatch[1];
+            }
+            return JSON.parse(fixedJsonText);
+        }
 
-        return result.data.slice(0, 10).map((job: any): Job => ({
-            title: job.job_title,
-            company: job.employer_name,
-            location: job.job_city ? `${job.job_city}, ${job.job_state}` : job.job_country,
-            match_percentage: Math.floor(Math.random() * (95 - 75 + 1) + 75), // Placeholder match %
-            apply_url: job.job_apply_link,
-            description: job.job_description,
-            salary_range: job.job_min_salary && job.job_max_salary
-                ? `$${job.job_min_salary} - $${job.job_max_salary} ${job.job_salary_currency}`
-                : 'Not specified',
-            experience_required: job.job_required_experience?.required_experience_in_months
-                ? `${Math.round(job.job_required_experience.required_experience_in_months / 12)} years`
-                : 'Not specified',
-            job_type: job.job_employment_type || 'FULLTIME',
-        }));
     } catch (error) {
-        console.error('Error fetching jobs from JSearch API:', error);
+        console.error("Error finding matching jobs:", error);
         return [];
     }
 };
