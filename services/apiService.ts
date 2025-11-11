@@ -2,10 +2,12 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { Job } from '../types';
 import { blobToBase64 } from '../utils/helpers';
 
-// Per Vercel + Vite guidelines, client-side env vars MUST be prefixed with VITE_
-// and accessed via import.meta.env.
-// FIX: Per @google/genai coding guidelines, the API key must be accessed via process.env.API_KEY.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+// FIX: Per @google/genai coding guidelines, the API key must be obtained from process.env.API_KEY.
+// This also resolves the vite/client type errors.
+if (!process.env.API_KEY) {
+    throw new Error("Google GenAI API key is missing. Please set the API_KEY environment variable.");
+}
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const resumeAnalysisSchema = {
     type: Type.OBJECT,
@@ -113,7 +115,6 @@ export const findMatchingJobs = async (jobTitles: string[]): Promise<Job[]> => {
                 model: 'gemini-2.5-flash',
                 contents: fixJsonPrompt,
             });
-            // FIX: Correctly extract JSON from the markdown code block before parsing to prevent errors.
             let fixedJsonText = fixResponse.text.trim();
             const fixedJsonMatch = fixedJsonText.match(/```json\n([\s\S]*?)\n```/);
             if (fixedJsonMatch && fixedJsonMatch[1]) {
